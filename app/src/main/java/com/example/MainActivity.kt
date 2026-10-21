@@ -2,6 +2,7 @@ package com.example
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.*
@@ -13,6 +14,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -21,13 +23,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -42,12 +42,20 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.FuelDatabase
 import com.example.data.FuelLog
 import com.example.data.FuelRepository
+import com.example.data.ServiceLog
 import com.example.ui.*
+import com.example.ui.components.AddServiceDialog
+import com.example.ui.screens.ReportsScreen
+import com.example.ui.screens.ServicesScreen
 import com.example.ui.theme.MyApplicationTheme
 import java.text.SimpleDateFormat
 import java.util.*
-import kotlin.math.cos
-import kotlin.math.sin
+
+enum class AppScreen {
+    FUEL,
+    SERVICES,
+    REPORTS
+}
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -55,7 +63,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         val database = FuelDatabase.getDatabase(this)
-        val repository = FuelRepository(database.fuelLogDao())
+        val repository = FuelRepository(database.fuelLogDao(), database.serviceLogDao())
 
         setContent {
             MyApplicationTheme {
@@ -72,13 +80,27 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun FuelTrackerApp(viewModel: FuelViewModel, modifier: Modifier = Modifier) {
     val uiStateLogs by viewModel.uiLogsList.collectAsStateWithLifecycle()
+    val servicesList by viewModel.servicesList.collectAsStateWithLifecycle()
     val stats by viewModel.statistics.collectAsStateWithLifecycle()
+    val serviceStats by viewModel.serviceStatistics.collectAsStateWithLifecycle()
+    val reportsData by viewModel.reportsData.collectAsStateWithLifecycle()
+    val selectedPeriod by viewModel.reportPeriod.collectAsStateWithLifecycle()
     val unitSystem by viewModel.unitSystem.collectAsStateWithLifecycle()
     val currencySymbol by viewModel.currencySymbol.collectAsStateWithLifecycle()
 
-    var showAddDialog by remember { mutableStateOf(false) }
+    var currentScreen by remember { mutableStateOf(AppScreen.FUEL) }
+    var showAddFuelDialog by remember { mutableStateOf(false) }
+    var showAddServiceDialog by remember { mutableStateOf(false) }
+    var logToEdit by remember { mutableStateOf<FuelLog?>(null) }
+    var serviceToEdit by remember { mutableStateOf<ServiceLog?>(null) }
     var logToDelete by remember { mutableStateOf<FuelLog?>(null) }
-    var languageIsFarsi by remember { mutableStateOf(false) }
+    var serviceToDelete by remember { mutableStateOf<ServiceLog?>(null) }
+    var languageIsFarsi by remember { mutableStateOf(true) } // Default to Persian as requested
+
+    // Handle back button to return to Fuel (home) if on other screens
+    BackHandler(enabled = currentScreen != AppScreen.FUEL) {
+        currentScreen = AppScreen.FUEL
+    }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -91,13 +113,21 @@ fun FuelTrackerApp(viewModel: FuelViewModel, modifier: Modifier = Modifier) {
                     ) {
                         Surface(
                             shape = CircleShape,
-                            color = Color(0xFF005AC1),
-                            shadowElevation = 6.dp,
+                            color = when (currentScreen) {
+                                AppScreen.FUEL -> Color(0xFF005AC1)
+                                AppScreen.SERVICES -> Color(0xFF1E3A8A)
+                                AppScreen.REPORTS -> Color(0xFF0D9488)
+                            },
+                            shadowElevation = 4.dp,
                             modifier = Modifier.size(38.dp)
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(
-                                    imageVector = Icons.Default.Info, // represents local_gas_station elegantly in default set
+                                    imageVector = when (currentScreen) {
+                                        AppScreen.FUEL -> Icons.Default.Info
+                                        AppScreen.SERVICES -> Icons.Default.Build
+                                        AppScreen.REPORTS -> Icons.Default.Star
+                                    },
                                     contentDescription = "Logo",
                                     tint = Color.White,
                                     modifier = Modifier.size(20.dp)
@@ -106,14 +136,24 @@ fun FuelTrackerApp(viewModel: FuelViewModel, modifier: Modifier = Modifier) {
                         }
                         Spacer(modifier = Modifier.width(10.dp))
                         Column {
+                            val titleText = when (currentScreen) {
+                                AppScreen.FUEL -> if (languageIsFarsi) "مدیریت سوخت" else "Fuel Tracker"
+                                AppScreen.SERVICES -> if (languageIsFarsi) "سرویس و نگهداری" else "Vehicle Services"
+                                AppScreen.REPORTS -> if (languageIsFarsi) "گزارشات و نمودارها" else "Analytics & Reports"
+                            }
+                            val subText = when (currentScreen) {
+                                AppScreen.FUEL -> if (languageIsFarsi) "داده‌های آفلاین درون گوشی" else "Local Native Persistence"
+                                AppScreen.SERVICES -> if (languageIsFarsi) "روغن، تعمیرات و بیمه" else "Oil, Repairs & Insurance"
+                                AppScreen.REPORTS -> if (languageIsFarsi) "نمودار مصرف و هزینه‌ها" else "Consumption & Cost Breakdown"
+                            }
                             Text(
-                                text = if (languageIsFarsi) "مدیریت سوخت" else "Fuel Tracker",
+                                text = titleText,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 18.sp,
                                 modifier = Modifier.testTag("app_title")
                             )
                             Text(
-                                text = if (languageIsFarsi) "داده‌های آفلاین درون گوشی" else "Local Native Persistence",
+                                text = subText,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.secondary,
                                 fontSize = 10.sp
@@ -134,7 +174,7 @@ fun FuelTrackerApp(viewModel: FuelViewModel, modifier: Modifier = Modifier) {
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Text(
-                                    text = if (languageIsFarsi) "EN" else "FA",
+                                    text = if (languageIsFarsi) "EN" else "فا",
                                     style = MaterialTheme.typography.labelMedium,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.onSecondaryContainer
@@ -203,21 +243,85 @@ fun FuelTrackerApp(viewModel: FuelViewModel, modifier: Modifier = Modifier) {
                 )
             )
         },
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = { showAddDialog = true },
-                containerColor = Color(0xFFDDE2F9),
-                contentColor = Color(0xFF001D35),
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier
-                    .navigationBarsPadding()
-                    .testTag("add_log_fab")
+        bottomBar = {
+            NavigationBar(
+                containerColor = Color.White,
+                tonalElevation = 8.dp,
+                modifier = Modifier.testTag("bottom_nav_bar")
             ) {
-                Icon(Icons.Default.Add, contentDescription = "Add Log")
+                // 1. سوخت (Fuel - Main/Home)
+                NavigationBarItem(
+                    selected = currentScreen == AppScreen.FUEL,
+                    onClick = { currentScreen = AppScreen.FUEL },
+                    icon = { Icon(Icons.Default.Info, contentDescription = "Fuel") },
+                    label = { Text(if (languageIsFarsi) "سوخت" else "Fuel", fontWeight = FontWeight.SemiBold) },
+                    modifier = Modifier.testTag("nav_fuel")
+                )
+
+                // 2. سرویس‌ها (Services)
+                NavigationBarItem(
+                    selected = currentScreen == AppScreen.SERVICES,
+                    onClick = { currentScreen = AppScreen.SERVICES },
+                    icon = {
+                        BadgedBox(
+                            badge = {
+                                if (serviceStats.alerts.any { it.isOverdue }) {
+                                    Badge { Text("!") }
+                                }
+                            }
+                        ) {
+                            Icon(Icons.Default.Build, contentDescription = "Services")
+                        }
+                    },
+                    label = { Text(if (languageIsFarsi) "سرویس‌ها" else "Services", fontWeight = FontWeight.SemiBold) },
+                    modifier = Modifier.testTag("nav_services")
+                )
+
+                // 3. گزارشات (Reports)
+                NavigationBarItem(
+                    selected = currentScreen == AppScreen.REPORTS,
+                    onClick = { currentScreen = AppScreen.REPORTS },
+                    icon = { Icon(Icons.Default.Star, contentDescription = "Reports") },
+                    label = { Text(if (languageIsFarsi) "گزارشات" else "Reports", fontWeight = FontWeight.SemiBold) },
+                    modifier = Modifier.testTag("nav_reports")
+                )
+            }
+        },
+        floatingActionButton = {
+            when (currentScreen) {
+                AppScreen.FUEL -> {
+                    FloatingActionButton(
+                        onClick = { showAddFuelDialog = true },
+                        containerColor = Color(0xFF005AC1),
+                        contentColor = Color.White,
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier
+                            .navigationBarsPadding()
+                            .testTag("add_log_fab")
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = "Add Log")
+                    }
+                }
+                AppScreen.SERVICES -> {
+                    FloatingActionButton(
+                        onClick = { showAddServiceDialog = true },
+                        containerColor = Color(0xFF1E3A8A),
+                        contentColor = Color.White,
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier
+                            .navigationBarsPadding()
+                            .testTag("add_service_fab")
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = "Add Service")
+                    }
+                }
+                AppScreen.REPORTS -> {
+                    // No FAB needed on reports
+                }
             }
         }
     ) { innerPadding ->
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
@@ -226,7 +330,7 @@ fun FuelTrackerApp(viewModel: FuelViewModel, modifier: Modifier = Modifier) {
                     // Modern glowing frosted/blurred bubble 1
                     drawCircle(
                         brush = Brush.radialGradient(
-                            colors = listOf(Color(0x1B005AC1), Color(0x00000000)),
+                            colors = listOf(Color(0x18005AC1), Color(0x00000000)),
                             center = Offset(size.width * 0.15f, size.height * 0.2f),
                             radius = size.width * 0.7f
                         ),
@@ -236,7 +340,7 @@ fun FuelTrackerApp(viewModel: FuelViewModel, modifier: Modifier = Modifier) {
                     // Modern glowing frosted/blurred bubble 2
                     drawCircle(
                         brush = Brush.radialGradient(
-                            colors = listOf(Color(0x14005AC1), Color(0x00000000)),
+                            colors = listOf(Color(0x12005AC1), Color(0x00000000)),
                             center = Offset(size.width * 0.85f, size.height * 0.75f),
                             radius = size.width * 0.8f
                         ),
@@ -245,73 +349,127 @@ fun FuelTrackerApp(viewModel: FuelViewModel, modifier: Modifier = Modifier) {
                     )
                 }
         ) {
-            // Stats Panel Widget
-            StatsDashboard(
-                stats = stats,
-                unitSystem = unitSystem,
-                currencySymbol = currencySymbol,
-                languageIsFarsi = languageIsFarsi,
-                onCurrencySelected = { viewModel.setCurrencySymbol(it) }
-            )
-
-            // Section Header
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = if (languageIsFarsi) "سوابق سوخت‌گیری" else "Fill-up History",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onBackground
-                )
-                Text(
-                    text = "${uiStateLogs.size} ${if (languageIsFarsi) "ثبت شده" else "logs"}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.secondary
-                )
-            }
-
-            // Entries List
-            if (uiStateLogs.isEmpty()) {
-                EmptyStateWidget(languageIsFarsi)
-            } else {
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                        .testTag("logs_list"),
-                    contentPadding = PaddingValues(bottom = 80.dp)
-                ) {
-                    items(uiStateLogs, key = { it.log.id }) { uiModel ->
-                        FuelLogItemCard(
-                            uiModel = uiModel,
-                            unitSystem = unitSystem,
-                            currencySymbol = currencySymbol,
-                            languageIsFarsi = languageIsFarsi,
-                            onDeleteClick = { logToDelete = uiModel.log }
-                        )
-                    }
+            when (currentScreen) {
+                AppScreen.FUEL -> {
+                    FuelScreenContent(
+                        uiStateLogs = uiStateLogs,
+                        stats = stats,
+                        unitSystem = unitSystem,
+                        currencySymbol = currencySymbol,
+                        languageIsFarsi = languageIsFarsi,
+                        onCurrencySelected = { viewModel.setCurrencySymbol(it) },
+                        onEditClick = { logToEdit = it },
+                        onDeleteClick = { logToDelete = it }
+                    )
+                }
+                AppScreen.SERVICES -> {
+                    ServicesScreen(
+                        services = servicesList,
+                        serviceStats = serviceStats,
+                        unitSystem = unitSystem,
+                        currencySymbol = currencySymbol,
+                        languageIsFarsi = languageIsFarsi,
+                        onEditService = { serviceToEdit = it },
+                        onDeleteService = { serviceToDelete = it },
+                        onAddServiceClick = { showAddServiceDialog = true }
+                    )
+                }
+                AppScreen.REPORTS -> {
+                    ReportsScreen(
+                        reportsData = reportsData,
+                        selectedPeriod = selectedPeriod,
+                        unitSystem = unitSystem,
+                        currencySymbol = currencySymbol,
+                        languageIsFarsi = languageIsFarsi,
+                        onPeriodSelected = { viewModel.setReportPeriod(it) }
+                    )
                 }
             }
         }
     }
 
     // Modal forms and dialogs
-    if (showAddDialog) {
+    if (showAddFuelDialog) {
         val latestOdometer = uiStateLogs.firstOrNull()?.log?.odometer ?: 0.0
         AddLogDialog(
             latestOdometer = latestOdometer,
             unitSystem = unitSystem,
             currencySymbol = currencySymbol,
             languageIsFarsi = languageIsFarsi,
-            onDismiss = { showAddDialog = false },
+            onDismiss = { showAddFuelDialog = false },
             onSave = { odo, fuel, cost, date, notes ->
                 viewModel.insertLog(odo, fuel, cost, date, notes)
-                showAddDialog = false
+                showAddFuelDialog = false
+            }
+        )
+    }
+
+    if (logToEdit != null) {
+        AddLogDialog(
+            latestOdometer = 0.0,
+            unitSystem = unitSystem,
+            currencySymbol = currencySymbol,
+            languageIsFarsi = languageIsFarsi,
+            logToEdit = logToEdit,
+            onDismiss = { logToEdit = null },
+            onSave = { odo, fuel, cost, date, notes ->
+                logToEdit?.let { current ->
+                    viewModel.updateLog(
+                        current.copy(
+                            odometer = odo,
+                            fuelAmount = fuel,
+                            totalCost = cost,
+                            date = date,
+                            notes = notes
+                        )
+                    )
+                }
+                logToEdit = null
+            }
+        )
+    }
+
+    if (showAddServiceDialog) {
+        val latestFuelOdo = uiStateLogs.firstOrNull()?.log?.odometer ?: 0.0
+        val latestServiceOdo = servicesList.firstOrNull()?.odometer ?: 0.0
+        val latestOdo = maxOf(latestFuelOdo, latestServiceOdo)
+
+        AddServiceDialog(
+            latestOdometer = latestOdo,
+            unitSystem = unitSystem,
+            currencySymbol = currencySymbol,
+            languageIsFarsi = languageIsFarsi,
+            onDismiss = { showAddServiceDialog = false },
+            onSave = { serviceType, date, odo, nextDue, cost, provider, notes ->
+                viewModel.insertService(serviceType, date, odo, nextDue, cost, provider, notes)
+                showAddServiceDialog = false
+            }
+        )
+    }
+
+    if (serviceToEdit != null) {
+        AddServiceDialog(
+            latestOdometer = 0.0,
+            unitSystem = unitSystem,
+            currencySymbol = currencySymbol,
+            languageIsFarsi = languageIsFarsi,
+            serviceToEdit = serviceToEdit,
+            onDismiss = { serviceToEdit = null },
+            onSave = { serviceType, date, odo, nextDue, cost, provider, notes ->
+                serviceToEdit?.let { current ->
+                    viewModel.updateService(
+                        current.copy(
+                            serviceType = serviceType,
+                            date = date,
+                            odometer = odo,
+                            nextDueOdometer = nextDue,
+                            cost = cost,
+                            provider = provider,
+                            notes = notes
+                        )
+                    )
+                }
+                serviceToEdit = null
             }
         )
     }
@@ -345,6 +503,105 @@ fun FuelTrackerApp(viewModel: FuelViewModel, modifier: Modifier = Modifier) {
             }
         )
     }
+
+    if (serviceToDelete != null) {
+        AlertDialog(
+            onDismissRequest = { serviceToDelete = null },
+            title = {
+                Text(text = if (languageIsFarsi) "حذف سابقه سرویس؟" else "Delete Service Entry?")
+            },
+            text = {
+                Text(text = if (languageIsFarsi) "آیا می‌خواهید این رکورد سرویس را از پایگاه داده حذف کنید؟" else "Are you sure you want to delete this service record?")
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        serviceToDelete?.let { viewModel.deleteService(it.id) }
+                        serviceToDelete = null
+                    },
+                    modifier = Modifier.testTag("delete_service_confirm_btn")
+                ) {
+                    Text(text = if (languageIsFarsi) "بله، حذف شود" else "Delete", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { serviceToDelete = null }
+                ) {
+                    Text(text = if (languageIsFarsi) "انصراف" else "Cancel")
+                }
+            }
+        )
+    }
+}
+
+@Composable
+fun FuelScreenContent(
+    uiStateLogs: List<FuelLogUiModel>,
+    stats: Statistics,
+    unitSystem: UnitSystem,
+    currencySymbol: String,
+    languageIsFarsi: Boolean,
+    onCurrencySelected: (String) -> Unit,
+    onEditClick: (FuelLog) -> Unit,
+    onDeleteClick: (FuelLog) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier = modifier.fillMaxSize()) {
+        // Stats Panel Widget
+        StatsDashboard(
+            stats = stats,
+            unitSystem = unitSystem,
+            currencySymbol = currencySymbol,
+            languageIsFarsi = languageIsFarsi,
+            onCurrencySelected = onCurrencySelected
+        )
+
+        // Section Header
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = if (languageIsFarsi) "سوابق سوخت‌گیری" else "Fill-up History",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+            Text(
+                text = "${uiStateLogs.size} ${if (languageIsFarsi) "ثبت شده" else "logs"}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.secondary
+            )
+        }
+
+        // Entries List
+        if (uiStateLogs.isEmpty()) {
+            EmptyStateWidget(languageIsFarsi)
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .testTag("logs_list"),
+                contentPadding = PaddingValues(bottom = 96.dp)
+            ) {
+                items(uiStateLogs, key = { it.log.id }) { uiModel ->
+                    FuelLogItemCard(
+                        uiModel = uiModel,
+                        unitSystem = unitSystem,
+                        currencySymbol = currencySymbol,
+                        languageIsFarsi = languageIsFarsi,
+                        onEditClick = { onEditClick(uiModel.log) },
+                        onDeleteClick = { onDeleteClick(uiModel.log) }
+                    )
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -377,19 +634,14 @@ fun StatsDashboard(
             .fillMaxWidth()
             .padding(16.dp),
         shape = RoundedCornerShape(32.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = Color.Transparent
-        ),
+        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
         elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
     ) {
         Column(
             modifier = Modifier
                 .background(
                     Brush.linearGradient(
-                        colors = listOf(
-                            Color(0xFF005AC1),
-                            Color(0xFF003780)
-                        )
+                        colors = listOf(Color(0xFF005AC1), Color(0xFF003780))
                     )
                 )
                 .drawBehind {
@@ -473,9 +725,7 @@ fun StatsDashboard(
 
                 Spacer(modifier = Modifier.width(16.dp))
 
-                Column(
-                    modifier = Modifier.weight(1f)
-                ) {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = if (languageIsFarsi) "میانگین مصرف دوره" else "Overall Efficiency",
                         style = MaterialTheme.typography.labelSmall,
@@ -496,7 +746,7 @@ fun StatsDashboard(
                 }
             }
 
-            Divider(
+            HorizontalDivider(
                 modifier = Modifier.padding(vertical = 16.dp),
                 color = Color.White.copy(alpha = 0.15f)
             )
@@ -508,7 +758,7 @@ fun StatsDashboard(
             ) {
                 StatSubCard(
                     title = if (languageIsFarsi) "کل هزینه" else "Total Spend",
-                    value = String.format(Locale.US, "%.1f %s", stats.totalCost, currencySymbol),
+                    value = String.format(Locale.US, "%,.0f %s", stats.totalCost, currencySymbol),
                     color = Color.White,
                     modifier = Modifier.weight(1f)
                 )
@@ -517,7 +767,7 @@ fun StatsDashboard(
 
                 StatSubCard(
                     title = if (languageIsFarsi) "مسافت کل" else "Total Distance",
-                    value = String.format(Locale.US, "%.0f %s", stats.totalDistance, distanceUnit),
+                    value = String.format(Locale.US, "%,.0f %s", stats.totalDistance, distanceUnit),
                     color = Color.White,
                     modifier = Modifier.weight(1f)
                 )
@@ -560,8 +810,8 @@ fun StatsDashboard(
                         fontWeight = FontWeight.Bold
                     )
                 }
-                
-                val currencies = listOf("$", "€", "﷼", "تومان")
+
+                val currencies = listOf("تومان", "﷼", "$", "€")
                 Row {
                     currencies.forEach { curr ->
                         Box(
@@ -639,6 +889,7 @@ fun FuelLogItemCard(
     unitSystem: UnitSystem,
     currencySymbol: String,
     languageIsFarsi: Boolean,
+    onEditClick: () -> Unit,
     onDeleteClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -660,7 +911,6 @@ fun FuelLogItemCard(
 
     val calendar = Calendar.getInstance().apply { timeInMillis = uiModel.log.date }
     val formattedDate = if (languageIsFarsi) {
-        // Simple manual format for FA
         val day = calendar.get(Calendar.DAY_OF_MONTH)
         val month = calendar.get(Calendar.MONTH) + 1
         val year = calendar.get(Calendar.YEAR)
@@ -684,7 +934,7 @@ fun FuelLogItemCard(
         Column(
             modifier = Modifier.padding(16.dp)
         ) {
-            // Header: Date and Delete button
+            // Header: Date and Actions
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -722,18 +972,33 @@ fun FuelLogItemCard(
                     }
                 }
 
-                IconButton(
-                    onClick = onDeleteClick,
-                    modifier = Modifier
-                        .size(36.dp)
-                        .testTag("delete_btn_${uiModel.log.id}")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Delete,
-                        contentDescription = "Delete",
-                        tint = MaterialTheme.colorScheme.error.copy(alpha = 0.8f),
-                        modifier = Modifier.size(18.dp)
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(
+                        onClick = onEditClick,
+                        modifier = Modifier
+                            .size(36.dp)
+                            .testTag("edit_btn_${uiModel.log.id}")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Edit,
+                            contentDescription = "Edit",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                    IconButton(
+                        onClick = onDeleteClick,
+                        modifier = Modifier
+                            .size(36.dp)
+                            .testTag("delete_btn_${uiModel.log.id}")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = "Delete",
+                            tint = MaterialTheme.colorScheme.error.copy(alpha = 0.8f),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
             }
 
@@ -780,7 +1045,7 @@ fun FuelLogItemCard(
                         color = MaterialTheme.colorScheme.secondary
                     )
                     Text(
-                        text = String.format(Locale.US, "%,.1f %s", uiModel.log.totalCost, currencySymbol),
+                        text = String.format(Locale.US, "%,.0f %s", uiModel.log.totalCost, currencySymbol),
                         style = MaterialTheme.typography.bodyLarge,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary
@@ -806,7 +1071,7 @@ fun FuelLogItemCard(
                     val distanceText = if (uiModel.distanceTraveled != null) {
                         String.format(Locale.US, "+%,.0f %s", uiModel.distanceTraveled, distanceUnit)
                     } else "---"
-                    
+
                     Text(
                         text = if (languageIsFarsi) "مسافت طی شده" else "Interval Distance",
                         style = MaterialTheme.typography.labelSmall,
@@ -874,14 +1139,33 @@ fun AddLogDialog(
     unitSystem: UnitSystem,
     currencySymbol: String,
     languageIsFarsi: Boolean,
+    logToEdit: FuelLog? = null,
     onDismiss: () -> Unit,
     onSave: (odometer: Double, fuelAmount: Double, totalCost: Double, date: Long, notes: String) -> Unit
 ) {
-    var odoInput by remember { mutableStateOf("") }
-    var fuelInput by remember { mutableStateOf("") }
-    var costInput by remember { mutableStateOf("") }
-    var notesInput by remember { mutableStateOf("") }
-    var dateInput by remember { mutableStateOf(System.currentTimeMillis()) }
+    var odoInput by remember {
+        mutableStateOf(
+            if (logToEdit != null) {
+                if (logToEdit.odometer % 1.0 == 0.0) logToEdit.odometer.toLong().toString() else logToEdit.odometer.toString()
+            } else ""
+        )
+    }
+    var fuelInput by remember {
+        mutableStateOf(
+            if (logToEdit != null) {
+                if (logToEdit.fuelAmount % 1.0 == 0.0) logToEdit.fuelAmount.toLong().toString() else logToEdit.fuelAmount.toString()
+            } else ""
+        )
+    }
+    var costInput by remember {
+        mutableStateOf(
+            if (logToEdit != null) {
+                if (logToEdit.totalCost % 1.0 == 0.0) logToEdit.totalCost.toLong().toString() else logToEdit.totalCost.toString()
+            } else ""
+        )
+    }
+    var notesInput by remember { mutableStateOf(logToEdit?.notes ?: "") }
+    var dateInput by remember { mutableStateOf(logToEdit?.date ?: System.currentTimeMillis()) }
 
     var odoError by remember { mutableStateOf<String?>(null) }
     var fuelError by remember { mutableStateOf<String?>(null) }
@@ -915,7 +1199,11 @@ fun AddLogDialog(
             ) {
                 // Dialog Title
                 Text(
-                    text = if (languageIsFarsi) "ثبت سوخت‌گیری جدید" else "New Fuel Entry",
+                    text = if (logToEdit != null) {
+                        if (languageIsFarsi) "ویرایش سابقه سوخت‌گیری" else "Edit Fuel Entry"
+                    } else {
+                        if (languageIsFarsi) "ثبت سوخت‌گیری جدید" else "New Fuel Entry"
+                    },
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.ExtraBold,
                     color = MaterialTheme.colorScheme.primary,
@@ -923,7 +1211,7 @@ fun AddLogDialog(
                 )
 
                 // Showing latest registered odometer
-                if (latestOdometer > 0.0) {
+                if (latestOdometer > 0.0 && logToEdit == null) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -933,10 +1221,10 @@ fun AddLogDialog(
                             .padding(all = 10.dp)
                     ) {
                         Text(
-                            text = if (languageIsFarsi) 
-                                "آخرین کیلومتر سوخت‌گیری شده: $latestOdometer $distanceUnit" 
-                            else 
-                                "Latest recorded odometer: $latestOdometer $distanceUnit",
+                            text = if (languageIsFarsi)
+                                "آخرین کیلومتر سوخت‌گیری شده: %,.0f %s".format(latestOdometer, distanceUnit)
+                            else
+                                "Latest recorded odometer: %,.0f %s".format(latestOdometer, distanceUnit),
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colorScheme.onPrimaryContainer
@@ -954,18 +1242,18 @@ fun AddLogDialog(
                             val value = it.toDoubleOrNull()
                             if (value == null) {
                                 odoError = if (languageIsFarsi) "مقدار باید عددی باشد" else "Value must be numeric"
-                            } else if (value <= latestOdometer && latestOdometer > 0) {
-                                odoError = if (languageIsFarsi) 
-                                    "کیلومتر باید بیشتر از آخرین ثبت ($latestOdometer) باشد" 
-                                else 
+                            } else if (logToEdit == null && value <= latestOdometer && latestOdometer > 0) {
+                                odoError = if (languageIsFarsi)
+                                    "کیلومتر باید بیشتر از آخرین ثبت ($latestOdometer) باشد"
+                                else
                                     "Odometer must be greater than previous ($latestOdometer)"
                             } else if (value < 0) {
                                 odoError = if (languageIsFarsi) "مقدار نمی‌تواند منفی باشد" else "Cannot be negative"
                             }
                         }
                     },
-                    label = { 
-                        Text(if (languageIsFarsi) "کیلومتر شمار ($distanceUnit) *" else "Odometer ($distanceUnit) *") 
+                    label = {
+                        Text(if (languageIsFarsi) "کیلومتر شمار ($distanceUnit) *" else "Odometer ($distanceUnit) *")
                     },
                     keyboardOptions = KeyboardOptions(
                         keyboardType = KeyboardType.Decimal,
@@ -994,8 +1282,8 @@ fun AddLogDialog(
                             }
                         }
                     },
-                    label = { 
-                        Text(if (languageIsFarsi) "مقدار سوخت ($fuelUnit) *" else "Fuel Refilled ($fuelUnit) *") 
+                    label = {
+                        Text(if (languageIsFarsi) "مقدار سوخت ($fuelUnit) *" else "Fuel Refilled ($fuelUnit) *")
                     },
                     keyboardOptions = KeyboardOptions(
                         keyboardType = KeyboardType.Decimal,
@@ -1024,8 +1312,8 @@ fun AddLogDialog(
                             }
                         }
                     },
-                    label = { 
-                        Text(if (languageIsFarsi) "هزینه کل ($currencySymbol) *" else "Total Cost ($currencySymbol) *") 
+                    label = {
+                        Text(if (languageIsFarsi) "هزینه کل ($currencySymbol) *" else "Total Cost ($currencySymbol) *")
                     },
                     keyboardOptions = KeyboardOptions(
                         keyboardType = KeyboardType.Decimal,
@@ -1062,16 +1350,16 @@ fun AddLogDialog(
                     TextButton(onClick = onDismiss) {
                         Text(if (languageIsFarsi) "انصراف" else "Cancel")
                     }
-                    
+
                     Spacer(modifier = Modifier.width(8.dp))
-                    
+
                     Button(
                         onClick = {
                             val odo = odoInput.toDoubleOrNull()
                             val fuel = fuelInput.toDoubleOrNull()
                             val cost = costInput.toDoubleOrNull()
 
-                            if (odo == null || (latestOdometer > 0 && odo <= latestOdometer) || odo < 0) {
+                            if (odo == null || (logToEdit == null && latestOdometer > 0 && odo <= latestOdometer) || odo < 0) {
                                 odoError = if (languageIsFarsi) "اطلاعات نامعتبر است" else "Invalid odometer value"
                             }
                             if (fuel == null || fuel <= 0) {
@@ -1087,7 +1375,13 @@ fun AddLogDialog(
                         },
                         modifier = Modifier.testTag("dialog_save_btn")
                     ) {
-                        Text(if (languageIsFarsi) "ذخیره" else "Save")
+                        Text(
+                            if (logToEdit != null) {
+                                if (languageIsFarsi) "ذخیره تغییرات" else "Save Changes"
+                            } else {
+                                if (languageIsFarsi) "ذخیره" else "Save"
+                            }
+                        )
                     }
                 }
             }
@@ -1133,7 +1427,7 @@ fun EmptyStateWidget(languageIsFarsi: Boolean) {
 
         Text(
             text = if (languageIsFarsi)
-                "روی دکمه ثبت سوخت در پایین کلیک کنید تا اولین سوخت‌گیری خود را وارد کنید."
+                "روی دکمه ثبت سوخت (+) در پایین کلیک کنید تا اولین سوخت‌گیری خود را وارد کنید."
             else
                 "Tap the + button below to add your first gas fill-up. The app will calculate fuel economy dynamically once you register 2 logs.",
             style = MaterialTheme.typography.bodyMedium,

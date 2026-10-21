@@ -5,9 +5,10 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-@Database(entities = [FuelLog::class], version = 1, exportSchema = false)
+@Database(entities = [FuelLog::class, ServiceLog::class], version = 2, exportSchema = false)
 abstract class FuelDatabase : RoomDatabase() {
     abstract fun fuelLogDao(): FuelLogDao
+    abstract fun serviceLogDao(): ServiceLogDao
 
     companion object {
         @Volatile
@@ -20,7 +21,7 @@ abstract class FuelDatabase : RoomDatabase() {
                     FuelDatabase::class.java,
                     "fuel_database"
                 )
-                .fallbackToDestructiveMigration()
+                .fallbackToDestructiveMigration(true)
                 .build()
                 INSTANCE = instance
                 instance
