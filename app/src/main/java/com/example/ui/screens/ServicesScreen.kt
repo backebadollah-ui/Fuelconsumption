@@ -29,6 +29,7 @@ import com.example.ui.ServiceAlert
 import com.example.ui.ServiceStatistics
 import com.example.ui.UnitSystem
 import com.example.ui.components.SERVICE_CATEGORIES
+import com.example.util.PersianDateHelper
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -391,8 +392,7 @@ fun ServiceItemCard(
         else -> Color(0xFF4B5563) // Slate
     }
 
-    val sdf = SimpleDateFormat("yyyy/MM/dd", Locale.getDefault())
-    val dateText = sdf.format(Date(service.date))
+    val dateText = PersianDateHelper.formatDisplayDate(service.date, languageIsFarsi, true)
 
     Card(
         modifier = Modifier

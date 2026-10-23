@@ -40,4 +40,29 @@ class FuelRepository(
     suspend fun deleteServiceById(id: Int) {
         serviceLogDao.deleteServiceById(id)
     }
+
+    suspend fun getAllFuelLogsSnapshot(): List<FuelLog> {
+        return fuelLogDao.getAllLogsSnapshot()
+    }
+
+    suspend fun getAllServicesSnapshot(): List<ServiceLog> {
+        return serviceLogDao.getAllServicesSnapshot()
+    }
+
+    suspend fun restoreData(
+        fuelLogs: List<FuelLog>,
+        serviceLogs: List<ServiceLog>,
+        replaceExisting: Boolean
+    ) {
+        if (replaceExisting) {
+            fuelLogDao.deleteAllLogs()
+            serviceLogDao.deleteAllServices()
+        }
+        if (fuelLogs.isNotEmpty()) {
+            fuelLogDao.insertAllLogs(fuelLogs)
+        }
+        if (serviceLogs.isNotEmpty()) {
+            serviceLogDao.insertAllServices(serviceLogs)
+        }
+    }
 }

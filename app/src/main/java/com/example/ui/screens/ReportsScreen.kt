@@ -33,7 +33,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.*
+import com.example.ui.components.CustomDateRangeDialog
 import com.example.ui.components.SERVICE_CATEGORIES
+import com.example.util.PersianDateHelper
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -41,12 +43,16 @@ import java.util.*
 fun ReportsScreen(
     reportsData: ReportsData,
     selectedPeriod: ReportPeriod,
+    customDateRange: CustomDateRange = CustomDateRange(),
     unitSystem: UnitSystem,
     currencySymbol: String,
     languageIsFarsi: Boolean,
     onPeriodSelected: (ReportPeriod) -> Unit,
+    onCustomDateRangeSelected: (startMillis: Long, endMillis: Long) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
+    var showDateRangeDialog by remember { mutableStateOf(false) }
+
     val distanceUnit = when (unitSystem) {
         UnitSystem.METRIC_L_100KM, UnitSystem.METRIC_KM_L -> if (languageIsFarsi) "کیلومتر" else "km"
         UnitSystem.IMPERIAL_MPG -> if (languageIsFarsi) "مایل" else "mi"
@@ -56,6 +62,11 @@ fun ReportsScreen(
         UnitSystem.METRIC_L_100KM -> if (languageIsFarsi) "لیتر/۱۰۰ک‌م" else "L/100km"
         UnitSystem.METRIC_KM_L -> if (languageIsFarsi) "ک‌م/لیتر" else "km/L"
         UnitSystem.IMPERIAL_MPG -> if (languageIsFarsi) "MPG" else "MPG"
+    }
+
+    fun formatDate(millis: Long?): String {
+        if (millis == null) return "---"
+        return PersianDateHelper.formatDisplayDate(millis, languageIsFarsi, true)
     }
 
     LazyColumn(
@@ -71,36 +82,105 @@ fun ReportsScreen(
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(8.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    val periods = listOf(
-                        ReportPeriod.ALL to if (languageIsFarsi) "کل تاریخ" else "All Time",
-                        ReportPeriod.THREE_MONTHS to if (languageIsFarsi) "۳ ماه اخیر" else "3 Months",
-                        ReportPeriod.SIX_MONTHS to if (languageIsFarsi) "۶ ماه اخیر" else "6 Months",
-                        ReportPeriod.ONE_YEAR to if (languageIsFarsi) "۱ سال اخیر" else "1 Year"
-                    )
+                Column(modifier = Modifier.padding(8.dp)) {
+                    LazyRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val periods = listOf(
+                            ReportPeriod.ALL to if (languageIsFarsi) "کل تاریخ" else "All Time",
+                            ReportPeriod.THREE_MONTHS to if (languageIsFarsi) "۳ ماه اخیر" else "3 Months",
+                            ReportPeriod.SIX_MONTHS to if (languageIsFarsi) "۶ ماه اخیر" else "6 Months",
+                            ReportPeriod.ONE_YEAR to if (languageIsFarsi) "۱ سال اخیر" else "1 Year",
+                            ReportPeriod.CUSTOM to if (languageIsFarsi) "بازه دلخواه 📅" else "Custom 📅"
+                        )
 
-                    periods.forEach { (period, label) ->
-                        val isSelected = selectedPeriod == period
+                        items(periods) { (period, label) ->
+                            val isSelected = selectedPeriod == period
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable {
+                                        if (period == ReportPeriod.CUSTOM) {
+                                            showDateRangeDialog = true
+                                        } else {
+                                            onPeriodSelected(period)
+                                        }
+                                    }
+                            ) {
+                                Text(
+                                    text = label,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    // If custom period is selected, show active range indicator with edit button
+                    if (selectedPeriod == ReportPeriod.CUSTOM) {
+                        Spacer(modifier = Modifier.height(8.dp))
                         Surface(
                             shape = RoundedCornerShape(12.dp),
-                            color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)),
                             modifier = Modifier
+                                .fillMaxWidth()
                                 .clip(RoundedCornerShape(12.dp))
-                                .clickable { onPeriodSelected(period) }
+                                .clickable { showDateRangeDialog = true }
                         ) {
-                            Text(
-                                text = label,
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
-                            )
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Default.DateRange,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = if (languageIsFarsi)
+                                            "بازه انتخابی: از ${formatDate(customDateRange.start)} تا ${formatDate(customDateRange.end)}"
+                                        else
+                                            "Range: ${formatDate(customDateRange.start)} to ${formatDate(customDateRange.end)}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                }
+
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Default.Edit,
+                                        contentDescription = "Edit range",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    IconButton(
+                                        onClick = { onPeriodSelected(ReportPeriod.ALL) },
+                                        modifier = Modifier.size(24.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "Reset filter",
+                                            tint = MaterialTheme.colorScheme.secondary,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -452,6 +532,19 @@ fun ReportsScreen(
                 }
             }
         }
+    }
+
+    if (showDateRangeDialog) {
+        CustomDateRangeDialog(
+            initialStartDate = customDateRange.start,
+            initialEndDate = customDateRange.end,
+            languageIsFarsi = languageIsFarsi,
+            onDismiss = { showDateRangeDialog = false },
+            onApply = { start, end ->
+                onCustomDateRangeSelected(start, end)
+                showDateRangeDialog = false
+            }
+        )
     }
 }
 

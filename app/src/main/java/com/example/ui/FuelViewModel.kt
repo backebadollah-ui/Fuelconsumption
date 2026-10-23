@@ -1,13 +1,14 @@
 package com.example.ui
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.example.data.FuelLog
-import com.example.data.FuelRepository
-import com.example.data.ServiceLog
+import com.example.data.*
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -21,7 +22,8 @@ enum class ReportPeriod {
     ALL,
     THREE_MONTHS,
     SIX_MONTHS,
-    ONE_YEAR
+    ONE_YEAR,
+    CUSTOM
 }
 
 data class FuelLogUiModel(
@@ -89,6 +91,11 @@ data class ReportsData(
     val costPerKm: Double?
 )
 
+data class CustomDateRange(
+    val start: Long? = null,
+    val end: Long? = null
+)
+
 class FuelViewModel(private val repository: FuelRepository) : ViewModel() {
 
     private val _unitSystem = MutableStateFlow(UnitSystem.METRIC_L_100KM)
@@ -99,6 +106,9 @@ class FuelViewModel(private val repository: FuelRepository) : ViewModel() {
 
     private val _reportPeriod = MutableStateFlow(ReportPeriod.ALL)
     val reportPeriod: StateFlow<ReportPeriod> = _reportPeriod.asStateFlow()
+
+    private val _customDateRange = MutableStateFlow(CustomDateRange())
+    val customDateRange: StateFlow<CustomDateRange> = _customDateRange.asStateFlow()
 
     val logsList: StateFlow<List<FuelLog>> = repository.allLogs
         .stateIn(
@@ -142,9 +152,10 @@ class FuelViewModel(private val repository: FuelRepository) : ViewModel() {
         uiLogsList,
         servicesList,
         unitSystem,
-        reportPeriod
-    ) { uiLogs, services, system, period ->
-        calculateReportsData(uiLogs, services, system, period)
+        reportPeriod,
+        customDateRange
+    ) { uiLogs, services, system, period, dateRange ->
+        calculateReportsData(uiLogs, services, system, period, dateRange.start, dateRange.end)
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
@@ -173,6 +184,11 @@ class FuelViewModel(private val repository: FuelRepository) : ViewModel() {
 
     fun setReportPeriod(period: ReportPeriod) {
         _reportPeriod.value = period
+    }
+
+    fun setCustomDateRange(startMillis: Long?, endMillis: Long?) {
+        _customDateRange.value = CustomDateRange(startMillis, endMillis)
+        _reportPeriod.value = ReportPeriod.CUSTOM
     }
 
     fun insertLog(odometer: Double, fuelAmount: Double, totalCost: Double, date: Long, notes: String) {
@@ -355,18 +371,41 @@ class FuelViewModel(private val repository: FuelRepository) : ViewModel() {
         uiLogs: List<FuelLogUiModel>,
         services: List<ServiceLog>,
         system: UnitSystem,
-        period: ReportPeriod
+        period: ReportPeriod,
+        startDate: Long?,
+        endDate: Long?
     ): ReportsData {
-        val now = System.currentTimeMillis()
-        val filterTime: Long = when (period) {
-            ReportPeriod.ALL -> 0L
-            ReportPeriod.THREE_MONTHS -> now - (90L * 24 * 3600 * 1000)
-            ReportPeriod.SIX_MONTHS -> now - (180L * 24 * 3600 * 1000)
-            ReportPeriod.ONE_YEAR -> now - (365L * 24 * 3600 * 1000)
+        val filteredUiLogs = if (period == ReportPeriod.CUSTOM) {
+            val start = startDate ?: 0L
+            val end = if (endDate != null) endDate + (24L * 3600 * 1000 - 1) else Long.MAX_VALUE
+            uiLogs.filter { it.log.date in start..end }
+        } else {
+            val now = System.currentTimeMillis()
+            val filterTime: Long = when (period) {
+                ReportPeriod.ALL -> 0L
+                ReportPeriod.THREE_MONTHS -> now - (90L * 24 * 3600 * 1000)
+                ReportPeriod.SIX_MONTHS -> now - (180L * 24 * 3600 * 1000)
+                ReportPeriod.ONE_YEAR -> now - (365L * 24 * 3600 * 1000)
+                ReportPeriod.CUSTOM -> 0L
+            }
+            uiLogs.filter { it.log.date >= filterTime }
         }
 
-        val filteredUiLogs = uiLogs.filter { it.log.date >= filterTime }
-        val filteredServices = services.filter { it.date >= filterTime }
+        val filteredServices = if (period == ReportPeriod.CUSTOM) {
+            val start = startDate ?: 0L
+            val end = if (endDate != null) endDate + (24L * 3600 * 1000 - 1) else Long.MAX_VALUE
+            services.filter { it.date in start..end }
+        } else {
+            val now = System.currentTimeMillis()
+            val filterTime: Long = when (period) {
+                ReportPeriod.ALL -> 0L
+                ReportPeriod.THREE_MONTHS -> now - (90L * 24 * 3600 * 1000)
+                ReportPeriod.SIX_MONTHS -> now - (180L * 24 * 3600 * 1000)
+                ReportPeriod.ONE_YEAR -> now - (365L * 24 * 3600 * 1000)
+                ReportPeriod.CUSTOM -> 0L
+            }
+            services.filter { it.date >= filterTime }
+        }
 
         // Consumption trend points (chronological order)
         val validPoints = filteredUiLogs
@@ -450,6 +489,94 @@ class FuelViewModel(private val repository: FuelRepository) : ViewModel() {
             totalDistance = totalDist,
             costPerKm = costPerKm
         )
+    }
+
+    // --- Backup & Restore capabilities (Online & Offline) ---
+
+    fun exportBackupData(onReady: (AppBackupData) -> Unit) {
+        viewModelScope.launch {
+            val fuels = repository.getAllFuelLogsSnapshot()
+            val services = repository.getAllServicesSnapshot()
+            val backup = AppBackupData(
+                fuelLogs = fuels,
+                serviceLogs = services
+            )
+            onReady(backup)
+        }
+    }
+
+    fun restoreBackupData(
+        backupData: AppBackupData,
+        replaceExisting: Boolean,
+        onComplete: (Result<Pair<Int, Int>>) -> Unit
+    ) {
+        viewModelScope.launch {
+            try {
+                repository.restoreData(
+                    fuelLogs = backupData.fuelLogs,
+                    serviceLogs = backupData.serviceLogs,
+                    replaceExisting = replaceExisting
+                )
+                onComplete(Result.success(Pair(backupData.fuelLogs.size, backupData.serviceLogs.size)))
+            } catch (e: Exception) {
+                onComplete(Result.failure(e))
+            }
+        }
+    }
+
+    fun saveCloudBackup(
+        context: Context,
+        syncKey: String,
+        onComplete: (Boolean) -> Unit
+    ) {
+        viewModelScope.launch {
+            val fuels = repository.getAllFuelLogsSnapshot()
+            val services = repository.getAllServicesSnapshot()
+            val backup = AppBackupData(
+                fuelLogs = fuels,
+                serviceLogs = services
+            )
+            val success = withContext(Dispatchers.IO) {
+                BackupManager.saveCloudBackup(context, syncKey, backup)
+            }
+            onComplete(success)
+        }
+    }
+
+    fun restoreCloudBackup(
+        context: Context,
+        syncKey: String,
+        replaceExisting: Boolean,
+        onComplete: (Result<Pair<Int, Int>>) -> Unit
+    ) {
+        viewModelScope.launch {
+            val backupResult = withContext(Dispatchers.IO) {
+                BackupManager.getCloudBackup(context, syncKey)
+            }
+            if (backupResult.isFailure) {
+                onComplete(Result.failure(backupResult.exceptionOrNull() ?: Exception("Unknown error")))
+                return@launch
+            }
+            val backup = backupResult.getOrThrow()
+            try {
+                repository.restoreData(
+                    fuelLogs = backup.fuelLogs,
+                    serviceLogs = backup.serviceLogs,
+                    replaceExisting = replaceExisting
+                )
+                onComplete(Result.success(Pair(backup.fuelLogs.size, backup.serviceLogs.size)))
+            } catch (e: Exception) {
+                onComplete(Result.failure(e))
+            }
+        }
+    }
+
+    fun getCloudBackupInfo(context: Context, syncKey: String): CloudBackupInfo? {
+        return BackupManager.getCloudBackupInfo(context, syncKey)
+    }
+
+    fun getSuggestedSyncKey(context: Context): String {
+        return BackupManager.getLastOrSuggestedSyncKey(context)
     }
 }
 

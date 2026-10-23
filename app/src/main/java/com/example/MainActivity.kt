@@ -45,9 +45,12 @@ import com.example.data.FuelRepository
 import com.example.data.ServiceLog
 import com.example.ui.*
 import com.example.ui.components.AddServiceDialog
+import com.example.ui.components.BackupRestoreDialog
+import com.example.ui.components.PersianDatePickerDialog
 import com.example.ui.screens.ReportsScreen
 import com.example.ui.screens.ServicesScreen
 import com.example.ui.theme.MyApplicationTheme
+import com.example.util.PersianDateHelper
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -85,12 +88,14 @@ fun FuelTrackerApp(viewModel: FuelViewModel, modifier: Modifier = Modifier) {
     val serviceStats by viewModel.serviceStatistics.collectAsStateWithLifecycle()
     val reportsData by viewModel.reportsData.collectAsStateWithLifecycle()
     val selectedPeriod by viewModel.reportPeriod.collectAsStateWithLifecycle()
+    val customDateRange by viewModel.customDateRange.collectAsStateWithLifecycle()
     val unitSystem by viewModel.unitSystem.collectAsStateWithLifecycle()
     val currencySymbol by viewModel.currencySymbol.collectAsStateWithLifecycle()
 
     var currentScreen by remember { mutableStateOf(AppScreen.FUEL) }
     var showAddFuelDialog by remember { mutableStateOf(false) }
     var showAddServiceDialog by remember { mutableStateOf(false) }
+    var showBackupRestoreDialog by remember { mutableStateOf(false) }
     var logToEdit by remember { mutableStateOf<FuelLog?>(null) }
     var serviceToEdit by remember { mutableStateOf<ServiceLog?>(null) }
     var logToDelete by remember { mutableStateOf<FuelLog?>(null) }
@@ -162,6 +167,27 @@ fun FuelTrackerApp(viewModel: FuelViewModel, modifier: Modifier = Modifier) {
                     }
                 },
                 actions = {
+                    // Backup & Restore button
+                    IconButton(
+                        onClick = { showBackupRestoreDialog = true },
+                        modifier = Modifier.testTag("backup_restore_btn")
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.Share,
+                                    contentDescription = if (languageIsFarsi) "پشتیبان‌گیری و بازگردانی" else "Backup & Restore",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    }
+
                     // Quick language toggle
                     IconButton(
                         onClick = { languageIsFarsi = !languageIsFarsi },
@@ -378,10 +404,12 @@ fun FuelTrackerApp(viewModel: FuelViewModel, modifier: Modifier = Modifier) {
                     ReportsScreen(
                         reportsData = reportsData,
                         selectedPeriod = selectedPeriod,
+                        customDateRange = customDateRange,
                         unitSystem = unitSystem,
                         currencySymbol = currencySymbol,
                         languageIsFarsi = languageIsFarsi,
-                        onPeriodSelected = { viewModel.setReportPeriod(it) }
+                        onPeriodSelected = { viewModel.setReportPeriod(it) },
+                        onCustomDateRangeSelected = { start, end -> viewModel.setCustomDateRange(start, end) }
                     )
                 }
             }
@@ -531,6 +559,14 @@ fun FuelTrackerApp(viewModel: FuelViewModel, modifier: Modifier = Modifier) {
                     Text(text = if (languageIsFarsi) "انصراف" else "Cancel")
                 }
             }
+        )
+    }
+
+    if (showBackupRestoreDialog) {
+        BackupRestoreDialog(
+            viewModel = viewModel,
+            languageIsFarsi = languageIsFarsi,
+            onDismiss = { showBackupRestoreDialog = false }
         )
     }
 }
@@ -909,16 +945,7 @@ fun FuelLogItemCard(
         UnitSystem.IMPERIAL_MPG -> if (languageIsFarsi) "MPG" else "MPG"
     }
 
-    val calendar = Calendar.getInstance().apply { timeInMillis = uiModel.log.date }
-    val formattedDate = if (languageIsFarsi) {
-        val day = calendar.get(Calendar.DAY_OF_MONTH)
-        val month = calendar.get(Calendar.MONTH) + 1
-        val year = calendar.get(Calendar.YEAR)
-        "$year/$month/$day"
-    } else {
-        val sdf = SimpleDateFormat("MMM dd, yyyy", Locale.getDefault())
-        sdf.format(Date(uiModel.log.date))
-    }
+    val formattedDate = PersianDateHelper.formatDisplayDate(uiModel.log.date, languageIsFarsi, includeMonthName = true)
 
     Card(
         modifier = modifier
@@ -1166,6 +1193,7 @@ fun AddLogDialog(
     }
     var notesInput by remember { mutableStateOf(logToEdit?.notes ?: "") }
     var dateInput by remember { mutableStateOf(logToEdit?.date ?: System.currentTimeMillis()) }
+    var showDatePicker by remember { mutableStateOf(false) }
 
     var odoError by remember { mutableStateOf<String?>(null) }
     var fuelError by remember { mutableStateOf<String?>(null) }
@@ -1179,6 +1207,18 @@ fun AddLogDialog(
     val fuelUnit = when (unitSystem) {
         UnitSystem.METRIC_L_100KM, UnitSystem.METRIC_KM_L -> if (languageIsFarsi) "لیتر" else "L"
         UnitSystem.IMPERIAL_MPG -> if (languageIsFarsi) "گالن" else "gal"
+    }
+
+    if (showDatePicker) {
+        PersianDatePickerDialog(
+            initialDateMillis = dateInput,
+            languageIsFarsi = languageIsFarsi,
+            onDismiss = { showDatePicker = false },
+            onDateSelected = {
+                dateInput = it
+                showDatePicker = false
+            }
+        )
     }
 
     Dialog(onDismissRequest = onDismiss) {
@@ -1209,6 +1249,52 @@ fun AddLogDialog(
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.padding(bottom = 16.dp)
                 )
+
+                // Date Selector Card (Solar Hijri)
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 14.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .clickable { showDatePicker = true }
+                        .testTag("pick_fuel_date_btn")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = if (languageIsFarsi) "تاریخ سوخت‌گیری (هجری شمسی):" else "Fill-up Date:",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.secondary
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = PersianDateHelper.formatDisplayDate(dateInput, languageIsFarsi, true),
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        FilledTonalIconButton(
+                            onClick = { showDatePicker = true },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.DateRange,
+                                contentDescription = "Change Date",
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
 
                 // Showing latest registered odometer
                 if (latestOdometer > 0.0 && logToEdit == null) {

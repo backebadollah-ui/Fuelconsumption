@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.data.ServiceLog
 import com.example.ui.UnitSystem
+import com.example.util.PersianDateHelper
 
 data class ServiceCategoryItem(
     val key: String,
@@ -87,6 +88,8 @@ fun AddServiceDialog(
     }
     var providerInput by remember { mutableStateOf(serviceToEdit?.provider ?: "") }
     var notesInput by remember { mutableStateOf(serviceToEdit?.notes ?: "") }
+    var dateInput by remember { mutableStateOf(serviceToEdit?.date ?: System.currentTimeMillis()) }
+    var showDatePicker by remember { mutableStateOf(false) }
 
     var odoError by remember { mutableStateOf<String?>(null) }
     var costError by remember { mutableStateOf<String?>(null) }
@@ -94,6 +97,18 @@ fun AddServiceDialog(
     val distanceUnit = when (unitSystem) {
         UnitSystem.METRIC_L_100KM, UnitSystem.METRIC_KM_L -> if (languageIsFarsi) "کیلومتر" else "km"
         UnitSystem.IMPERIAL_MPG -> if (languageIsFarsi) "مایل" else "mi"
+    }
+
+    if (showDatePicker) {
+        PersianDatePickerDialog(
+            initialDateMillis = dateInput,
+            languageIsFarsi = languageIsFarsi,
+            onDismiss = { showDatePicker = false },
+            onDateSelected = {
+                dateInput = it
+                showDatePicker = false
+            }
+        )
     }
 
     Dialog(onDismissRequest = onDismiss) {
@@ -195,6 +210,52 @@ fun AddServiceDialog(
                                     color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface
                                 )
                             }
+                        }
+                    }
+                }
+
+                // Service Date Picker Card (Solar Hijri)
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 12.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .clickable { showDatePicker = true }
+                        .testTag("pick_service_date_btn")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = if (languageIsFarsi) "تاریخ انجام سرویس (هجری شمسی):" else "Service Date:",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.secondary
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = PersianDateHelper.formatDisplayDate(dateInput, languageIsFarsi, true),
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        FilledTonalIconButton(
+                            onClick = { showDatePicker = true },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.DateRange,
+                                contentDescription = "Change Date",
+                                modifier = Modifier.size(18.dp)
+                            )
                         }
                     }
                 }
@@ -309,10 +370,9 @@ fun AddServiceDialog(
                             }
 
                             if (odo != null && cost != null && odoError == null && costError == null) {
-                                val date = serviceToEdit?.date ?: System.currentTimeMillis()
                                 onSave(
                                     selectedType,
-                                    date,
+                                    dateInput,
                                     odo,
                                     nextDue,
                                     cost,
