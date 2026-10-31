@@ -1,0 +1,6 @@
+{
+  "name": "Fuel Consumption Tracker",
+  "description": "A native Android application designed to log gas fill-ups, monitor fuel efficiency, and track vehicle fuel consumption statistics over time.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

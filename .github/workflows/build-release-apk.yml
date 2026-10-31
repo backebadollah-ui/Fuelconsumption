@@ -1,0 +1,144 @@
+name: Build Release APK
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    name: Build Signed Release APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21 (Required for AGP 9.x & Gradle 9.x)
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept Android SDK licenses
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+
+      - name: Ensure .env file exists for Secrets Gradle Plugin
+        run: |
+          if [ ! -f .env ]; then
+            if [ -f .env.example ]; then
+              cp .env.example .env
+            else
+              touch .env
+            fi
+          fi
+
+      - name: Restore debug.keystore and prepare release signing keystore
+        shell: bash
+        env:
+          RAW_KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          RAW_STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          RAW_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          # 1. Ensure debug.keystore exists (from debug.keystore.base64 if committed)
+          if [ ! -f "${GITHUB_WORKSPACE}/debug.keystore" ]; then
+            if [ -f "${GITHUB_WORKSPACE}/debug.keystore.base64" ]; then
+              tr -d '[:space:]' < "${GITHUB_WORKSPACE}/debug.keystore.base64" | base64 --decode > "${GITHUB_WORKSPACE}/debug.keystore"
+            else
+              keytool -genkeypair -v \
+                -keystore "${GITHUB_WORKSPACE}/debug.keystore" \
+                -storepass android \
+                -keypass android \
+                -alias androiddebugkey \
+                -keyalg RSA \
+                -keysize 2048 \
+                -validity 10000 \
+                -dname "CN=Android Debug,O=Android,C=US"
+            fi
+          fi
+
+          # 2. Prepare release keystore (uses GitHub Secrets if valid, or generates a working fallback)
+          KEYSTORE_FILE="${GITHUB_WORKSPACE}/my-upload-key.jks"
+          EFF_STORE_PASS="${RAW_STORE_PASSWORD:-android}"
+          EFF_KEY_PASS="${RAW_KEY_PASSWORD:-$EFF_STORE_PASS}"
+
+          if [ -n "${RAW_KEYSTORE_BASE64:-}" ]; then
+            echo "${RAW_KEYSTORE_BASE64}" | tr -d '[:space:]' | base64 --decode > "$KEYSTORE_FILE"
+            if keytool -list -keystore "$KEYSTORE_FILE" -storepass "$EFF_STORE_PASS" -alias upload >/dev/null 2>&1; then
+              echo "Using provided release keystore from GitHub Secrets."
+            else
+              echo "Provided keystore is invalid or missing 'upload' alias; generating fallback keystore..."
+              rm -f "$KEYSTORE_FILE"
+              EFF_STORE_PASS="android"
+              EFF_KEY_PASS="android"
+            fi
+          fi
+
+          if [ ! -f "$KEYSTORE_FILE" ]; then
+            echo "Generating signed release keystore (alias: upload)..."
+            keytool -genkeypair -v \
+              -keystore "$KEYSTORE_FILE" \
+              -storetype PKCS12 \
+              -storepass "$EFF_STORE_PASS" \
+              -keypass "$EFF_KEY_PASS" \
+              -alias upload \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Fuel Tracker,O=Personal Project,C=IR"
+          fi
+
+          echo "KEYSTORE_PATH=${KEYSTORE_FILE}" >> "$GITHUB_ENV"
+          echo "STORE_PASSWORD=${EFF_STORE_PASS}" >> "$GITHUB_ENV"
+          echo "KEY_PASSWORD=${EFF_KEY_PASS}" >> "$GITHUB_ENV"
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x ./gradlew
+
+      - name: Build Signed Release APK
+        env:
+          GRADLE_OPTS: "-Djava.awt.headless=true"
+        run: ./gradlew :app:assembleRelease --no-daemon --stacktrace
+
+      - name: Verify and rename APK output
+        run: |
+          APK_SOURCE=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          if [ -z "$APK_SOURCE" ]; then
+            echo "Error: Release APK was not found!"
+            exit 1
+          fi
+          cp "$APK_SOURCE" app/build/outputs/apk/release/FuelTracker-v1.0-release.apk
+          echo "Built APK: $APK_SOURCE"
+
+      - name: Upload Release APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FuelTracker-Release-APK
+          path: app/build/outputs/apk/release/FuelTracker-v1.0-release.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub Release (on version tags v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: app/build/outputs/apk/release/FuelTracker-v1.0-release.apk
+          generate_release_notes: true
