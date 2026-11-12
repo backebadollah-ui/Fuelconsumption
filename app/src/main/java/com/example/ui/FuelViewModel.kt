@@ -5,6 +5,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.*
+import com.example.ui.theme.ThemeMode
+import com.example.ui.theme.ThemePalette
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -98,6 +100,12 @@ data class CustomDateRange(
 
 class FuelViewModel(private val repository: FuelRepository) : ViewModel() {
 
+    private val _themePalette = MutableStateFlow(ThemePalette.OCEAN_BLUE)
+    val themePalette: StateFlow<ThemePalette> = _themePalette.asStateFlow()
+
+    private val _themeMode = MutableStateFlow(ThemeMode.LIGHT)
+    val themeMode: StateFlow<ThemeMode> = _themeMode.asStateFlow()
+
     private val _unitSystem = MutableStateFlow(UnitSystem.METRIC_L_100KM)
     val unitSystem: StateFlow<UnitSystem> = _unitSystem.asStateFlow()
 
@@ -130,6 +138,26 @@ class FuelViewModel(private val repository: FuelRepository) : ViewModel() {
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = emptyList()
+    )
+
+    // Data for the last 30 days (1 month focus for the Home screen)
+    val recentMonthLogs: StateFlow<List<FuelLogUiModel>> = uiLogsList.map { logs ->
+        val cutoff = System.currentTimeMillis() - (30L * 24 * 3600 * 1000)
+        logs.filter { it.log.date >= cutoff }
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
+    )
+
+    val recentMonthStatistics: StateFlow<Statistics> = combine(logsList, unitSystem) { logs, system ->
+        val cutoff = System.currentTimeMillis() - (30L * 24 * 3600 * 1000)
+        val filteredLogs = logs.filter { it.date >= cutoff }
+        calculateStatistics(filteredLogs, system)
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = Statistics(0.0, 0.0, 0.0, null, 0.0)
     )
 
     val statistics: StateFlow<Statistics> = combine(logsList, unitSystem) { logs, system ->
@@ -180,6 +208,51 @@ class FuelViewModel(private val repository: FuelRepository) : ViewModel() {
 
     fun setCurrencySymbol(symbol: String) {
         _currencySymbol.value = symbol
+    }
+
+    fun setThemePalette(palette: ThemePalette) {
+        _themePalette.value = palette
+    }
+
+    fun setThemeMode(mode: ThemeMode) {
+        _themeMode.value = mode
+    }
+
+    fun initPreferences(context: Context) {
+        val prefs = context.getSharedPreferences("app_settings_prefs", Context.MODE_PRIVATE)
+        val paletteName = prefs.getString("theme_palette", ThemePalette.OCEAN_BLUE.name)
+        val modeName = prefs.getString("theme_mode", ThemeMode.LIGHT.name)
+        val curr = prefs.getString("currency_symbol", "تومان") ?: "تومان"
+        val unit = prefs.getString("unit_system", UnitSystem.METRIC_L_100KM.name)
+
+        _themePalette.value = runCatching { ThemePalette.valueOf(paletteName!!) }.getOrDefault(ThemePalette.OCEAN_BLUE)
+        _themeMode.value = runCatching { ThemeMode.valueOf(modeName!!) }.getOrDefault(ThemeMode.LIGHT)
+        _currencySymbol.value = curr
+        _unitSystem.value = runCatching { UnitSystem.valueOf(unit!!) }.getOrDefault(UnitSystem.METRIC_L_100KM)
+    }
+
+    fun saveThemePalette(context: Context, palette: ThemePalette) {
+        _themePalette.value = palette
+        context.getSharedPreferences("app_settings_prefs", Context.MODE_PRIVATE)
+            .edit().putString("theme_palette", palette.name).apply()
+    }
+
+    fun saveThemeMode(context: Context, mode: ThemeMode) {
+        _themeMode.value = mode
+        context.getSharedPreferences("app_settings_prefs", Context.MODE_PRIVATE)
+            .edit().putString("theme_mode", mode.name).apply()
+    }
+
+    fun saveCurrencySymbol(context: Context, symbol: String) {
+        _currencySymbol.value = symbol
+        context.getSharedPreferences("app_settings_prefs", Context.MODE_PRIVATE)
+            .edit().putString("currency_symbol", symbol).apply()
+    }
+
+    fun saveUnitSystem(context: Context, system: UnitSystem) {
+        _unitSystem.value = system
+        context.getSharedPreferences("app_settings_prefs", Context.MODE_PRIVATE)
+            .edit().putString("unit_system", system.name).apply()
     }
 
     fun setReportPeriod(period: ReportPeriod) {

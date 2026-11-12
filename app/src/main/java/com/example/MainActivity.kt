@@ -48,17 +48,22 @@ import com.example.ui.*
 import com.example.ui.components.AddServiceDialog
 import com.example.ui.components.BackupRestoreDialog
 import com.example.ui.components.PersianDatePickerDialog
+import com.example.ui.screens.FuelHistoryScreen
 import com.example.ui.screens.ReportsScreen
 import com.example.ui.screens.ServicesScreen
+import com.example.ui.screens.SettingsScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.example.util.PersianDateHelper
+import androidx.compose.ui.platform.LocalContext
 import java.text.SimpleDateFormat
 import java.util.*
 
 enum class AppScreen {
     FUEL,
     SERVICES,
-    REPORTS
+    REPORTS,
+    FUEL_HISTORY,
+    SETTINGS
 }
 
 class MainActivity : ComponentActivity() {
@@ -79,10 +84,17 @@ class MainActivity : ComponentActivity() {
         val repository = FuelRepository(database.fuelLogDao(), database.serviceLogDao())
 
         setContent {
-            MyApplicationTheme {
-                val viewModel: FuelViewModel = viewModel(
-                    factory = FuelViewModelFactory(repository)
-                )
+            val viewModel: FuelViewModel = viewModel(
+                factory = FuelViewModelFactory(repository)
+            )
+            val context = LocalContext.current
+            LaunchedEffect(Unit) {
+                viewModel.initPreferences(context)
+            }
+            val themePalette by viewModel.themePalette.collectAsStateWithLifecycle()
+            val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
+
+            MyApplicationTheme(palette = themePalette, mode = themeMode) {
                 FuelTrackerApp(viewModel)
             }
         }
@@ -93,8 +105,10 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun FuelTrackerApp(viewModel: FuelViewModel, modifier: Modifier = Modifier) {
     val uiStateLogs by viewModel.uiLogsList.collectAsStateWithLifecycle()
-    val servicesList by viewModel.servicesList.collectAsStateWithLifecycle()
+    val recentLogs by viewModel.recentMonthLogs.collectAsStateWithLifecycle()
     val stats by viewModel.statistics.collectAsStateWithLifecycle()
+    val recentStats by viewModel.recentMonthStatistics.collectAsStateWithLifecycle()
+    val servicesList by viewModel.servicesList.collectAsStateWithLifecycle()
     val serviceStats by viewModel.serviceStatistics.collectAsStateWithLifecycle()
     val reportsData by viewModel.reportsData.collectAsStateWithLifecycle()
     val selectedPeriod by viewModel.reportPeriod.collectAsStateWithLifecycle()
@@ -117,224 +131,200 @@ fun FuelTrackerApp(viewModel: FuelViewModel, modifier: Modifier = Modifier) {
         currentScreen = AppScreen.FUEL
     }
 
+    val primaryColor = MaterialTheme.colorScheme.primary
+
     Scaffold(
         modifier = modifier.fillMaxSize(),
         topBar = {
-            TopAppBar(
-                title = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(vertical = 4.dp)
-                    ) {
-                        Surface(
-                            shape = CircleShape,
-                            color = when (currentScreen) {
-                                AppScreen.FUEL -> Color(0xFF005AC1)
-                                AppScreen.SERVICES -> Color(0xFF1E3A8A)
-                                AppScreen.REPORTS -> Color(0xFF0D9488)
-                            },
-                            shadowElevation = 4.dp,
-                            modifier = Modifier.size(38.dp)
+            if (currentScreen != AppScreen.FUEL_HISTORY && currentScreen != AppScreen.SETTINGS) {
+                TopAppBar(
+                    title = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(vertical = 4.dp)
                         ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = when (currentScreen) {
-                                        AppScreen.FUEL -> Icons.Default.Info
-                                        AppScreen.SERVICES -> Icons.Default.Build
-                                        AppScreen.REPORTS -> Icons.Default.Star
-                                    },
-                                    contentDescription = "Logo",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(20.dp)
-                                )
+                            Surface(
+                                shape = CircleShape,
+                                color = when (currentScreen) {
+                                    AppScreen.FUEL -> primaryColor
+                                    AppScreen.SERVICES -> Color(0xFF1E3A8A)
+                                    AppScreen.REPORTS -> Color(0xFF0D9488)
+                                    else -> primaryColor
+                                },
+                                shadowElevation = 4.dp,
+                                modifier = Modifier.size(38.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = when (currentScreen) {
+                                            AppScreen.FUEL -> Icons.Default.Info
+                                            AppScreen.SERVICES -> Icons.Default.Build
+                                            AppScreen.REPORTS -> Icons.Default.Star
+                                            else -> Icons.Default.Settings
+                                        },
+                                        contentDescription = "Logo",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
                             }
-                        }
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Column {
-                            val titleText = when (currentScreen) {
-                                AppScreen.FUEL -> if (languageIsFarsi) "مدیریت سوخت" else "Fuel Tracker"
-                                AppScreen.SERVICES -> if (languageIsFarsi) "سرویس و نگهداری" else "Vehicle Services"
-                                AppScreen.REPORTS -> if (languageIsFarsi) "گزارشات و نمودارها" else "Analytics & Reports"
-                            }
-                            val subText = when (currentScreen) {
-                                AppScreen.FUEL -> if (languageIsFarsi) "داده‌های آفلاین درون گوشی" else "Local Native Persistence"
-                                AppScreen.SERVICES -> if (languageIsFarsi) "روغن، تعمیرات و بیمه" else "Oil, Repairs & Insurance"
-                                AppScreen.REPORTS -> if (languageIsFarsi) "نمودار مصرف و هزینه‌ها" else "Consumption & Cost Breakdown"
-                            }
-                            Text(
-                                text = titleText,
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = 18.sp,
-                                color = Color(0xFF0F172A),
-                                modifier = Modifier.testTag("app_title")
-                            )
-                            Text(
-                                text = subText,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Color(0xFF334155),
-                                fontWeight = FontWeight.Medium,
-                                fontSize = 11.sp
-                            )
-                        }
-                    }
-                },
-                actions = {
-                    // Backup & Restore button
-                    IconButton(
-                        onClick = { showBackupRestoreDialog = true },
-                        modifier = Modifier.testTag("backup_restore_btn")
-                    ) {
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
-                            modifier = Modifier.size(36.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Default.Share,
-                                    contentDescription = if (languageIsFarsi) "پشتیبان‌گیری و بازگردانی" else "Backup & Restore",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    // Quick language toggle
-                    IconButton(
-                        onClick = { languageIsFarsi = !languageIsFarsi },
-                        modifier = Modifier.testTag("lang_toggle_btn")
-                    ) {
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.secondaryContainer,
-                            modifier = Modifier.size(36.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                val titleText = when (currentScreen) {
+                                    AppScreen.FUEL -> if (languageIsFarsi) "مدیریت سوخت" else "Fuel Tracker"
+                                    AppScreen.SERVICES -> if (languageIsFarsi) "سرویس و نگهداری" else "Vehicle Services"
+                                    AppScreen.REPORTS -> if (languageIsFarsi) "گزارشات و نمودارها" else "Analytics & Reports"
+                                    else -> ""
+                                }
+                                val subText = when (currentScreen) {
+                                    AppScreen.FUEL -> if (languageIsFarsi) "خلاصه ۳۰ روز اخیر و سوابق" else "30-Day Focus & Recent History"
+                                    AppScreen.SERVICES -> if (languageIsFarsi) "روغن، تعمیرات و بیمه" else "Oil, Repairs & Insurance"
+                                    AppScreen.REPORTS -> if (languageIsFarsi) "نمودار مصرف و هزینه‌ها" else "Consumption & Cost Breakdown"
+                                    else -> ""
+                                }
                                 Text(
-                                    text = if (languageIsFarsi) "EN" else "فا",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                                    text = titleText,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 18.sp,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.testTag("app_title")
+                                )
+                                Text(
+                                    text = subText,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.secondary,
+                                    fontWeight = FontWeight.Medium,
+                                    fontSize = 11.sp
                                 )
                             }
-                        }
-                    }
-
-                    // Unit system selector icon menu
-                    var showUnitMenu by remember { mutableStateOf(false) }
-                    IconButton(
-                        onClick = { showUnitMenu = true },
-                        modifier = Modifier.testTag("unit_menu_btn")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Settings,
-                            contentDescription = "Units",
-                            tint = Color(0xFF0F172A)
-                        )
-                    }
-
-                    DropdownMenu(
-                        expanded = showUnitMenu,
-                        onDismissRequest = { showUnitMenu = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("L/100 km (Metric)") },
-                            onClick = {
-                                viewModel.setUnitSystem(UnitSystem.METRIC_L_100KM)
-                                showUnitMenu = false
-                            },
-                            leadingIcon = {
-                                if (unitSystem == UnitSystem.METRIC_L_100KM) {
-                                    Icon(Icons.Default.Check, "Selected")
-                                }
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("km/L (Metric Alt)") },
-                            onClick = {
-                                viewModel.setUnitSystem(UnitSystem.METRIC_KM_L)
-                                showUnitMenu = false
-                            },
-                            leadingIcon = {
-                                if (unitSystem == UnitSystem.METRIC_KM_L) {
-                                    Icon(Icons.Default.Check, "Selected")
-                                }
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("MPG (Imperial)") },
-                            onClick = {
-                                viewModel.setUnitSystem(UnitSystem.IMPERIAL_MPG)
-                                showUnitMenu = false
-                            },
-                            leadingIcon = {
-                                if (unitSystem == UnitSystem.IMPERIAL_MPG) {
-                                    Icon(Icons.Default.Check, "Selected")
-                                }
-                            }
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent,
-                    titleContentColor = Color(0xFF0F172A),
-                    actionIconContentColor = Color(0xFF0F172A)
-                )
-            )
-        },
-        bottomBar = {
-            val navItemColors = NavigationBarItemDefaults.colors(
-                selectedIconColor = Color(0xFF0052B4),
-                selectedTextColor = Color(0xFF0052B4),
-                indicatorColor = Color(0xFFDBEAFE),
-                unselectedIconColor = Color(0xFF334155),
-                unselectedTextColor = Color(0xFF334155)
-            )
-            NavigationBar(
-                containerColor = Color.White,
-                tonalElevation = 8.dp,
-                modifier = Modifier.testTag("bottom_nav_bar")
-            ) {
-                // 1. سوخت (Fuel - Main/Home)
-                NavigationBarItem(
-                    selected = currentScreen == AppScreen.FUEL,
-                    onClick = { currentScreen = AppScreen.FUEL },
-                    icon = { Icon(Icons.Default.Info, contentDescription = "Fuel") },
-                    label = { Text(if (languageIsFarsi) "سوخت" else "Fuel", fontWeight = FontWeight.Bold) },
-                    colors = navItemColors,
-                    modifier = Modifier.testTag("nav_fuel")
-                )
-
-                // 2. سرویس‌ها (Services)
-                NavigationBarItem(
-                    selected = currentScreen == AppScreen.SERVICES,
-                    onClick = { currentScreen = AppScreen.SERVICES },
-                    icon = {
-                        BadgedBox(
-                            badge = {
-                                if (serviceStats.alerts.any { it.isOverdue }) {
-                                    Badge { Text("!") }
-                                }
-                            }
-                        ) {
-                            Icon(Icons.Default.Build, contentDescription = "Services")
                         }
                     },
-                    label = { Text(if (languageIsFarsi) "سرویس‌ها" else "Services", fontWeight = FontWeight.Bold) },
-                    colors = navItemColors,
-                    modifier = Modifier.testTag("nav_services")
-                )
+                    actions = {
+                        // Backup & Restore button
+                        IconButton(
+                            onClick = { showBackupRestoreDialog = true },
+                            modifier = Modifier.testTag("backup_restore_btn")
+                        ) {
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.Share,
+                                        contentDescription = if (languageIsFarsi) "پشتیبان‌گیری و بازگردانی" else "Backup & Restore",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
 
-                // 3. گزارشات (Reports)
-                NavigationBarItem(
-                    selected = currentScreen == AppScreen.REPORTS,
-                    onClick = { currentScreen = AppScreen.REPORTS },
-                    icon = { Icon(Icons.Default.Star, contentDescription = "Reports") },
-                    label = { Text(if (languageIsFarsi) "گزارشات" else "Reports", fontWeight = FontWeight.Bold) },
-                    colors = navItemColors,
-                    modifier = Modifier.testTag("nav_reports")
+                        // Quick language toggle
+                        IconButton(
+                            onClick = { languageIsFarsi = !languageIsFarsi },
+                            modifier = Modifier.testTag("lang_toggle_btn")
+                        ) {
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.secondaryContainer,
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text(
+                                        text = if (languageIsFarsi) "EN" else "فا",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                                    )
+                                }
+                            }
+                        }
+
+                        // Full settings screen navigation button
+                        IconButton(
+                            onClick = { currentScreen = AppScreen.SETTINGS },
+                            modifier = Modifier.testTag("settings_screen_btn")
+                        ) {
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.Settings,
+                                        contentDescription = if (languageIsFarsi) "تنظیمات" else "Settings",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color.Transparent,
+                        titleContentColor = MaterialTheme.colorScheme.onSurface,
+                        actionIconContentColor = MaterialTheme.colorScheme.onSurface
+                    )
                 )
+            }
+        },
+        bottomBar = {
+            if (currentScreen == AppScreen.FUEL || currentScreen == AppScreen.SERVICES || currentScreen == AppScreen.REPORTS) {
+                val navItemColors = NavigationBarItemDefaults.colors(
+                    selectedIconColor = MaterialTheme.colorScheme.primary,
+                    selectedTextColor = MaterialTheme.colorScheme.primary,
+                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                    unselectedIconColor = MaterialTheme.colorScheme.secondary,
+                    unselectedTextColor = MaterialTheme.colorScheme.secondary
+                )
+                NavigationBar(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 8.dp,
+                    modifier = Modifier.testTag("bottom_nav_bar")
+                ) {
+                    // 1. سوخت (Fuel - Main/Home)
+                    NavigationBarItem(
+                        selected = currentScreen == AppScreen.FUEL,
+                        onClick = { currentScreen = AppScreen.FUEL },
+                        icon = { Icon(Icons.Default.Info, contentDescription = "Fuel") },
+                        label = { Text(if (languageIsFarsi) "سوخت" else "Fuel", fontWeight = FontWeight.Bold) },
+                        colors = navItemColors,
+                        modifier = Modifier.testTag("nav_fuel")
+                    )
+
+                    // 2. سرویس‌ها (Services)
+                    NavigationBarItem(
+                        selected = currentScreen == AppScreen.SERVICES,
+                        onClick = { currentScreen = AppScreen.SERVICES },
+                        icon = {
+                            BadgedBox(
+                                badge = {
+                                    if (serviceStats.alerts.any { it.isOverdue }) {
+                                        Badge { Text("!") }
+                                    }
+                                }
+                            ) {
+                                Icon(Icons.Default.Build, contentDescription = "Services")
+                            }
+                        },
+                        label = { Text(if (languageIsFarsi) "سرویس‌ها" else "Services", fontWeight = FontWeight.Bold) },
+                        colors = navItemColors,
+                        modifier = Modifier.testTag("nav_services")
+                    )
+
+                    // 3. گزارشات (Reports)
+                    NavigationBarItem(
+                        selected = currentScreen == AppScreen.REPORTS,
+                        onClick = { currentScreen = AppScreen.REPORTS },
+                        icon = { Icon(Icons.Default.Star, contentDescription = "Reports") },
+                        label = { Text(if (languageIsFarsi) "گزارشات" else "Reports", fontWeight = FontWeight.Bold) },
+                        colors = navItemColors,
+                        modifier = Modifier.testTag("nav_reports")
+                    )
+                }
             }
         },
         floatingActionButton = {
@@ -342,7 +332,7 @@ fun FuelTrackerApp(viewModel: FuelViewModel, modifier: Modifier = Modifier) {
                 AppScreen.FUEL -> {
                     FloatingActionButton(
                         onClick = { showAddFuelDialog = true },
-                        containerColor = Color(0xFF005AC1),
+                        containerColor = primaryColor,
                         contentColor = Color.White,
                         shape = RoundedCornerShape(16.dp),
                         modifier = Modifier
@@ -365,8 +355,8 @@ fun FuelTrackerApp(viewModel: FuelViewModel, modifier: Modifier = Modifier) {
                         Icon(Icons.Default.Add, contentDescription = "Add Service")
                     }
                 }
-                AppScreen.REPORTS -> {
-                    // No FAB needed on reports
+                else -> {
+                    // No FAB needed on other screens
                 }
             }
         }
@@ -375,12 +365,12 @@ fun FuelTrackerApp(viewModel: FuelViewModel, modifier: Modifier = Modifier) {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .background(Color(0xFFF1F5F9))
+                .background(MaterialTheme.colorScheme.background)
                 .drawBehind {
                     // Modern glowing frosted/blurred bubble 1
                     drawCircle(
                         brush = Brush.radialGradient(
-                            colors = listOf(Color(0x18005AC1), Color(0x00000000)),
+                            colors = listOf(primaryColor.copy(alpha = 0.12f), Color.Transparent),
                             center = Offset(size.width * 0.15f, size.height * 0.2f),
                             radius = size.width * 0.7f
                         ),
@@ -390,7 +380,7 @@ fun FuelTrackerApp(viewModel: FuelViewModel, modifier: Modifier = Modifier) {
                     // Modern glowing frosted/blurred bubble 2
                     drawCircle(
                         brush = Brush.radialGradient(
-                            colors = listOf(Color(0x12005AC1), Color(0x00000000)),
+                            colors = listOf(primaryColor.copy(alpha = 0.08f), Color.Transparent),
                             center = Offset(size.width * 0.85f, size.height * 0.75f),
                             radius = size.width * 0.8f
                         ),
@@ -402,11 +392,13 @@ fun FuelTrackerApp(viewModel: FuelViewModel, modifier: Modifier = Modifier) {
             when (currentScreen) {
                 AppScreen.FUEL -> {
                     FuelScreenContent(
-                        uiStateLogs = uiStateLogs,
-                        stats = stats,
+                        recentLogs = recentLogs,
+                        recentStats = recentStats,
+                        totalLogsCount = uiStateLogs.size,
                         unitSystem = unitSystem,
                         currencySymbol = currencySymbol,
                         languageIsFarsi = languageIsFarsi,
+                        onViewAllLogsClick = { currentScreen = AppScreen.FUEL_HISTORY },
                         onCurrencySelected = { viewModel.setCurrencySymbol(it) },
                         onEditClick = { logToEdit = it },
                         onDeleteClick = { logToDelete = it }
@@ -434,6 +426,26 @@ fun FuelTrackerApp(viewModel: FuelViewModel, modifier: Modifier = Modifier) {
                         languageIsFarsi = languageIsFarsi,
                         onPeriodSelected = { viewModel.setReportPeriod(it) },
                         onCustomDateRangeSelected = { start, end -> viewModel.setCustomDateRange(start, end) }
+                    )
+                }
+                AppScreen.FUEL_HISTORY -> {
+                    FuelHistoryScreen(
+                        allLogs = uiStateLogs,
+                        unitSystem = unitSystem,
+                        currencySymbol = currencySymbol,
+                        languageIsFarsi = languageIsFarsi,
+                        onBackClick = { currentScreen = AppScreen.FUEL },
+                        onEditClick = { logToEdit = it },
+                        onDeleteClick = { logToDelete = it }
+                    )
+                }
+                AppScreen.SETTINGS -> {
+                    SettingsScreen(
+                        viewModel = viewModel,
+                        languageIsFarsi = languageIsFarsi,
+                        onLanguageToggle = { languageIsFarsi = it },
+                        onBackClick = { currentScreen = AppScreen.FUEL },
+                        onOpenBackupDialog = { showBackupRestoreDialog = true }
                     )
                 }
             }
@@ -597,25 +609,89 @@ fun FuelTrackerApp(viewModel: FuelViewModel, modifier: Modifier = Modifier) {
 
 @Composable
 fun FuelScreenContent(
-    uiStateLogs: List<FuelLogUiModel>,
-    stats: Statistics,
+    recentLogs: List<FuelLogUiModel>,
+    recentStats: Statistics,
+    totalLogsCount: Int,
     unitSystem: UnitSystem,
     currencySymbol: String,
     languageIsFarsi: Boolean,
+    onViewAllLogsClick: () -> Unit,
     onCurrencySelected: (String) -> Unit,
     onEditClick: (FuelLog) -> Unit,
     onDeleteClick: (FuelLog) -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(modifier = modifier.fillMaxSize()) {
-        // Stats Panel Widget
+        // Stats Panel Widget (Focused on 30-day recent statistics)
         StatsDashboard(
-            stats = stats,
+            stats = recentStats,
             unitSystem = unitSystem,
             currencySymbol = currencySymbol,
             languageIsFarsi = languageIsFarsi,
             onCurrencySelected = onCurrencySelected
         )
+
+        // Banner Action to View All Logs & Search
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp)
+                .clip(RoundedCornerShape(18.dp))
+                .clickable { onViewAllLogsClick() }
+                .testTag("view_all_history_banner"),
+            shape = RoundedCornerShape(18.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f))
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        modifier = Modifier.size(40.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.List,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = if (languageIsFarsi) "مشاهده و جستجوی تمام سوابق" else "View All History & Filter",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = if (languageIsFarsi) "آرشیو کل فیش‌ها ($totalLogsCount مورد) با جستجو و فیلتر زمانی" else "All $totalLogsCount records with search & filters",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.secondary,
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+                Icon(
+                    imageVector = if (languageIsFarsi) Icons.AutoMirrored.Filled.KeyboardArrowLeft else Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = "Open History",
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
 
         // Section Header
         Row(
@@ -626,29 +702,33 @@ fun FuelScreenContent(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = if (languageIsFarsi) "سوابق سوخت‌گیری" else "Fill-up History",
+                text = if (languageIsFarsi) "سوابق ۳۰ روز اخیر" else "Past 30 Days Fill-ups",
                 style = MaterialTheme.typography.titleMedium,
                 fontSize = 17.sp,
                 fontWeight = FontWeight.ExtraBold,
-                color = Color(0xFF0F172A)
+                color = MaterialTheme.colorScheme.onSurface
             )
             Surface(
                 shape = RoundedCornerShape(10.dp),
-                color = Color(0xFFE2E8F0)
+                color = MaterialTheme.colorScheme.surfaceVariant
             ) {
                 Text(
-                    text = "${uiStateLogs.size} ${if (languageIsFarsi) "ثبت شده" else "logs"}",
+                    text = "${recentLogs.size} ${if (languageIsFarsi) "فیش اخیر" else "recent"}",
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.Bold,
-                    color = Color(0xFF1E293B),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                 )
             }
         }
 
         // Entries List
-        if (uiStateLogs.isEmpty()) {
-            EmptyStateWidget(languageIsFarsi)
+        if (recentLogs.isEmpty()) {
+            RecentMonthEmptyWidget(
+                totalLogsCount = totalLogsCount,
+                languageIsFarsi = languageIsFarsi,
+                onViewAllClick = onViewAllLogsClick
+            )
         } else {
             LazyColumn(
                 modifier = Modifier
@@ -657,7 +737,7 @@ fun FuelScreenContent(
                     .testTag("logs_list"),
                 contentPadding = PaddingValues(bottom = 96.dp)
             ) {
-                items(uiStateLogs, key = { it.log.id }) { uiModel ->
+                items(recentLogs, key = { it.log.id }) { uiModel ->
                     FuelLogItemCard(
                         uiModel = uiModel,
                         unitSystem = unitSystem,
@@ -667,6 +747,79 @@ fun FuelScreenContent(
                         onDeleteClick = { onDeleteClick(uiModel.log) }
                     )
                 }
+            }
+        }
+    }
+}
+
+@Composable
+fun RecentMonthEmptyWidget(
+    totalLogsCount: Int,
+    languageIsFarsi: Boolean,
+    onViewAllClick: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(24.dp)
+            .padding(top = 20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Surface(
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
+            modifier = Modifier.size(76.dp)
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = Icons.Default.DateRange,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(38.dp)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Text(
+            text = if (languageIsFarsi) "در ۳۰ روز اخیر فیشی ثبت نشده است" else "No fill-ups in the last 30 days",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.ExtraBold,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+
+        Spacer(modifier = Modifier.height(6.dp))
+
+        Text(
+            text = if (languageIsFarsi) {
+                if (totalLogsCount > 0)
+                    "شما در مجموع $totalLogsCount فیش قدیمی‌تر در دیتابیس دارید. با دکمه زیر می‌توانید تمام سوابق را مشاهده و بازبینی کنید."
+                else
+                    "برای شروع، روی دکمه + در پایین کلیک کنید و اولین سوخت‌گیری خود را وارد نمایید."
+            } else {
+                if (totalLogsCount > 0)
+                    "You have $totalLogsCount older fill-ups in the archive. Tap below to review past records."
+                else
+                    "Tap the + button below to add your first fill-up."
+            },
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = FontWeight.Medium,
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.secondary,
+            modifier = Modifier.padding(horizontal = 16.dp)
+        )
+
+        if (totalLogsCount > 0) {
+            Spacer(modifier = Modifier.height(14.dp))
+            OutlinedButton(
+                onClick = onViewAllClick,
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Icon(Icons.Default.List, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(if (languageIsFarsi) "مشاهده تمام $totalLogsCount فیش گذشته" else "View All $totalLogsCount Past Logs")
             }
         }
     }
@@ -697,6 +850,9 @@ fun StatsDashboard(
         UnitSystem.IMPERIAL_MPG -> if (languageIsFarsi) "مایل/گالن" else "MPG"
     }
 
+    val cardPrimary = MaterialTheme.colorScheme.primary
+    val cardDark = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)
+
     Card(
         modifier = modifier
             .fillMaxWidth()
@@ -709,7 +865,7 @@ fun StatsDashboard(
             modifier = Modifier
                 .background(
                     Brush.linearGradient(
-                        colors = listOf(Color(0xFF005AC1), Color(0xFF003780))
+                        colors = listOf(cardPrimary, cardDark)
                     )
                 )
                 .drawBehind {
@@ -727,6 +883,33 @@ fun StatsDashboard(
                 }
                 .padding(20.dp)
         ) {
+            // 30-Day Badge Indicator
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = Color.White.copy(alpha = 0.2f),
+                modifier = Modifier.padding(bottom = 12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.DateRange,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(12.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = if (languageIsFarsi) "وضعیت ۳۰ روز اخیر" else "Past 30 Days Overview",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+            }
+
             // Dashboard Header with Glass Gauge
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -795,7 +978,7 @@ fun StatsDashboard(
 
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = if (languageIsFarsi) "میانگین مصرف دوره" else "Overall Efficiency",
+                        text = if (languageIsFarsi) "میانگین مصرف ۳۰ روز اخیر" else "30-Day Efficiency",
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
                         color = Color.White.copy(alpha = 0.92f)
@@ -809,7 +992,7 @@ fun StatsDashboard(
                         style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.Black,
                         color = Color.White,
-                        fontSize = 26.sp
+                        fontSize = 24.sp
                     )
                 }
             }
@@ -987,11 +1170,11 @@ fun FuelLogItemCard(
             .testTag("log_item_card_${uiModel.log.id}"),
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(
-            containerColor = Color.White,
-            contentColor = Color(0xFF0F172A)
+            containerColor = MaterialTheme.colorScheme.surface,
+            contentColor = MaterialTheme.colorScheme.onSurface
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-        border = BorderStroke(1.dp, Color(0xFFCBD5E1))
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(
             modifier = Modifier.padding(16.dp)
@@ -1007,13 +1190,13 @@ fun FuelLogItemCard(
                         modifier = Modifier
                             .size(44.dp)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(Color(0xFFDBEAFE)),
+                            .background(MaterialTheme.colorScheme.primaryContainer),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Default.DateRange,
                             contentDescription = "Date Emblem",
-                            tint = Color(0xFF0052B4),
+                            tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(22.dp)
                         )
                     }
@@ -1024,13 +1207,13 @@ fun FuelLogItemCard(
                             style = MaterialTheme.typography.titleMedium,
                             fontSize = 15.sp,
                             fontWeight = FontWeight.ExtraBold,
-                            color = Color(0xFF0F172A)
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
                             text = if (languageIsFarsi) "جایگاه سوخت" else "Fill-up Station",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.SemiBold,
-                            color = Color(0xFF475569),
+                            color = MaterialTheme.colorScheme.secondary,
                             fontSize = 12.sp
                         )
                     }
@@ -1046,7 +1229,7 @@ fun FuelLogItemCard(
                         Icon(
                             imageVector = Icons.Default.Edit,
                             contentDescription = "Edit",
-                            tint = Color(0xFF0052B4),
+                            tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(19.dp)
                         )
                     }
@@ -1059,7 +1242,7 @@ fun FuelLogItemCard(
                         Icon(
                             imageVector = Icons.Default.Delete,
                             contentDescription = "Delete",
-                            tint = Color(0xFFDC2626),
+                            tint = MaterialTheme.colorScheme.error,
                             modifier = Modifier.size(19.dp)
                         )
                     }
@@ -1079,7 +1262,7 @@ fun FuelLogItemCard(
                         text = if (languageIsFarsi) "کیلومتر شمار" else "Odometer",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFF334155),
+                        color = MaterialTheme.colorScheme.secondary,
                         fontSize = 12.sp
                     )
                     Spacer(modifier = Modifier.height(2.dp))
@@ -1087,7 +1270,7 @@ fun FuelLogItemCard(
                         text = String.format(Locale.US, "%,.0f %s", uiModel.log.odometer, distanceUnit),
                         style = MaterialTheme.typography.bodyLarge,
                         fontWeight = FontWeight.ExtraBold,
-                        color = Color(0xFF0F172A),
+                        color = MaterialTheme.colorScheme.onSurface,
                         fontSize = 15.sp
                     )
                 }
@@ -1098,7 +1281,7 @@ fun FuelLogItemCard(
                         text = if (languageIsFarsi) "حجم سوخت" else "Refilled",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFF334155),
+                        color = MaterialTheme.colorScheme.secondary,
                         fontSize = 12.sp
                     )
                     Spacer(modifier = Modifier.height(2.dp))
@@ -1106,7 +1289,7 @@ fun FuelLogItemCard(
                         text = String.format(Locale.US, "%.1f %s", uiModel.log.fuelAmount, fuelUnit),
                         style = MaterialTheme.typography.bodyLarge,
                         fontWeight = FontWeight.ExtraBold,
-                        color = Color(0xFF0F172A),
+                        color = MaterialTheme.colorScheme.onSurface,
                         fontSize = 15.sp
                     )
                 }
@@ -1117,7 +1300,7 @@ fun FuelLogItemCard(
                         text = if (languageIsFarsi) "هزینه کل" else "Total Cost",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFF334155),
+                        color = MaterialTheme.colorScheme.secondary,
                         fontSize = 12.sp
                     )
                     Spacer(modifier = Modifier.height(2.dp))
@@ -1125,7 +1308,7 @@ fun FuelLogItemCard(
                         text = String.format(Locale.US, "%,.0f %s", uiModel.log.totalCost, currencySymbol),
                         style = MaterialTheme.typography.bodyLarge,
                         fontWeight = FontWeight.ExtraBold,
-                        color = Color(0xFF0052B4),
+                        color = MaterialTheme.colorScheme.primary,
                         fontSize = 15.sp
                     )
                 }
@@ -1138,8 +1321,8 @@ fun FuelLogItemCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(14.dp))
-                    .background(Color(0xFFF1F5F9))
-                    .border(1.dp, Color(0xFFCBD5E1), RoundedCornerShape(14.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(14.dp))
                     .padding(horizontal = 14.dp, vertical = 12.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
@@ -1154,7 +1337,7 @@ fun FuelLogItemCard(
                         text = if (languageIsFarsi) "مسافت طی شده" else "Interval Distance",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFF334155),
+                        color = MaterialTheme.colorScheme.secondary,
                         fontSize = 12.sp
                     )
                     Spacer(modifier = Modifier.height(2.dp))
@@ -1162,7 +1345,7 @@ fun FuelLogItemCard(
                         text = distanceText,
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.ExtraBold,
-                        color = Color(0xFF0F172A),
+                        color = MaterialTheme.colorScheme.onSurface,
                         fontSize = 14.sp
                     )
                 }
@@ -1179,7 +1362,7 @@ fun FuelLogItemCard(
                         text = if (languageIsFarsi) "مصرف این دوره" else "Interval Efficiency",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFF334155),
+                        color = MaterialTheme.colorScheme.secondary,
                         fontSize = 12.sp
                     )
                     Spacer(modifier = Modifier.height(2.dp))
@@ -1187,7 +1370,7 @@ fun FuelLogItemCard(
                         text = efficiencyText,
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.ExtraBold,
-                        color = if (uiModel.efficiency != null) Color(0xFF0052B4) else Color(0xFF334155),
+                        color = if (uiModel.efficiency != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
                         fontSize = 14.sp
                     )
                 }
