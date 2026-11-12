@@ -109,8 +109,15 @@ class FuelViewModel(private val repository: FuelRepository) : ViewModel() {
     private val _unitSystem = MutableStateFlow(UnitSystem.METRIC_L_100KM)
     val unitSystem: StateFlow<UnitSystem> = _unitSystem.asStateFlow()
 
+    companion object {
+        const val DEFAULT_GITHUB_URL = "https://github.com/backebadollah-ui/Fuelconsumption"
+    }
+
     private val _currencySymbol = MutableStateFlow("تومان")
     val currencySymbol: StateFlow<String> = _currencySymbol.asStateFlow()
+
+    private val _githubUrl = MutableStateFlow(DEFAULT_GITHUB_URL)
+    val githubUrl: StateFlow<String> = _githubUrl.asStateFlow()
 
     private val _reportPeriod = MutableStateFlow(ReportPeriod.ALL)
     val reportPeriod: StateFlow<ReportPeriod> = _reportPeriod.asStateFlow()
@@ -224,11 +231,13 @@ class FuelViewModel(private val repository: FuelRepository) : ViewModel() {
         val modeName = prefs.getString("theme_mode", ThemeMode.LIGHT.name)
         val curr = prefs.getString("currency_symbol", "تومان") ?: "تومان"
         val unit = prefs.getString("unit_system", UnitSystem.METRIC_L_100KM.name)
+        val savedGithubUrl = prefs.getString("github_url", "")?.takeIf { it.isNotBlank() } ?: DEFAULT_GITHUB_URL
 
         _themePalette.value = runCatching { ThemePalette.valueOf(paletteName!!) }.getOrDefault(ThemePalette.OCEAN_BLUE)
         _themeMode.value = runCatching { ThemeMode.valueOf(modeName!!) }.getOrDefault(ThemeMode.LIGHT)
         _currencySymbol.value = curr
         _unitSystem.value = runCatching { UnitSystem.valueOf(unit!!) }.getOrDefault(UnitSystem.METRIC_L_100KM)
+        _githubUrl.value = savedGithubUrl
     }
 
     fun saveThemePalette(context: Context, palette: ThemePalette) {
@@ -253,6 +262,21 @@ class FuelViewModel(private val repository: FuelRepository) : ViewModel() {
         _unitSystem.value = system
         context.getSharedPreferences("app_settings_prefs", Context.MODE_PRIVATE)
             .edit().putString("unit_system", system.name).apply()
+    }
+
+    fun saveGithubUrl(context: Context, url: String) {
+        val trimmed = url.trim()
+        val normalized = if (trimmed.isNotEmpty() &&
+            !trimmed.startsWith("http://", ignoreCase = true) &&
+            !trimmed.startsWith("https://", ignoreCase = true)
+        ) {
+            "https://$trimmed"
+        } else {
+            trimmed
+        }
+        _githubUrl.value = normalized
+        context.getSharedPreferences("app_settings_prefs", Context.MODE_PRIVATE)
+            .edit().putString("github_url", normalized).apply()
     }
 
     fun setReportPeriod(period: ReportPeriod) {

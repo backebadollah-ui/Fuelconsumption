@@ -60,8 +60,8 @@
 
 ۱. مخزن پروژه را کلون کنید:
 ```bash
-git clone <repository-url>
-cd <repository-folder>
+git clone https://github.com/backebadollah-ui/Fuelconsumption.git
+cd Fuelconsumption
 ```
 ۲. پروژه را در **Android Studio** باز کنید تا وابستگی‌های Gradle همگام‌سازی شوند.
 ۳. اپلیکیشن را روی شبیه‌ساز یا دستگاه فیزیکی اندروید اجرا کنید، یا از طریق خط فرمان فایل APK نسخه دیباگ را بسازید:
